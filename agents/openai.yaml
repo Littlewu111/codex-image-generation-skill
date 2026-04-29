@@ -1,0 +1,4 @@
+interface:
+  display_name: "Codex Image Generation"
+  short_description: "Generate images through Codex API config"
+  default_prompt: "Use $codex-image-generation to generate an image with the Codex default API settings and show it in the client."
