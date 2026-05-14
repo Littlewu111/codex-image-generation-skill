@@ -10,6 +10,9 @@ import mimetypes
 import os
 from pathlib import Path
 import re
+import shutil
+import subprocess
+import tempfile
 import time
 import urllib.error
 import urllib.request
@@ -94,7 +97,7 @@ def sniff_extension(data: bytes, requested_format: str | None) -> str:
     return ".img"
 
 
-def request_json(url: str, key: str, payload: dict, timeout: int) -> tuple[int, dict, float]:
+def request_json_urllib(url: str, key: str, payload: dict, timeout: int) -> tuple[int, dict, float]:
     body = json.dumps(payload).encode("utf-8")
     req = urllib.request.Request(
         url,
@@ -121,6 +124,96 @@ def request_json(url: str, key: str, payload: dict, timeout: int) -> tuple[int, 
     return status, parsed, elapsed
 
 
+def request_json_curl(
+    url: str,
+    key: str,
+    payload: dict,
+    timeout: int,
+    body_path: Path | None = None,
+) -> tuple[int, dict, float]:
+    curl = shutil.which("curl")
+    if not curl:
+        raise RuntimeError("curl is not available")
+
+    body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+    with tempfile.NamedTemporaryFile("wb", delete=False) as payload_file:
+        payload_file.write(body)
+        payload_file_path = Path(payload_file.name)
+
+    created_body_path = body_path is None
+    if body_path is None:
+        body_handle = tempfile.NamedTemporaryFile("wb", delete=False)
+        body_handle.close()
+        body_path = Path(body_handle.name)
+
+    with tempfile.NamedTemporaryFile("w", encoding="utf-8", delete=False) as config_file:
+        config_file.write(f'url = "{url}"\n')
+        config_file.write("silent\n")
+        config_file.write("show-error\n")
+        config_file.write(f"max-time = {timeout}\n")
+        config_file.write(f'output = "{body_path}"\n')
+        config_file.write('write-out = "http_code=%{http_code}\\n"\n')
+        config_file.write(f'header = "Authorization: Bearer {key}"\n')
+        config_file.write('header = "Content-Type: application/json"\n')
+        config_file.write('header = "User-Agent: curl/8.7.1"\n')
+        config_file.write(f'data-binary = "@{payload_file_path}"\n')
+        config_file_path = Path(config_file.name)
+
+    command = [curl, "--config", str(config_file_path)]
+    start = time.time()
+    try:
+        completed = subprocess.run(
+            command,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=timeout + 5,
+        )
+        elapsed = time.time() - start
+        if completed.returncode != 0:
+            stderr = completed.stderr.strip()
+            raise SystemExit(f"curl request failed with exit code {completed.returncode}: {stderr}")
+        status = 0
+        for line in completed.stdout.splitlines():
+            if line.startswith("http_code="):
+                status = int(line.split("=", 1)[1])
+                break
+        raw = body_path.read_bytes()
+    finally:
+        payload_file_path.unlink(missing_ok=True)
+        config_file_path.unlink(missing_ok=True)
+        if created_body_path and body_path is not None:
+            body_path.unlink(missing_ok=True)
+
+    try:
+        parsed = json.loads(raw.decode("utf-8"))
+    except Exception as exc:
+        raise SystemExit(f"Non-JSON response from API, HTTP {status}: {exc}") from exc
+    return status, parsed, elapsed
+
+
+def request_json(
+    url: str,
+    key: str,
+    payload: dict,
+    timeout: int,
+    transport: str = "curl",
+    body_path: Path | None = None,
+) -> tuple[int, dict, float]:
+    if transport == "urllib":
+        return request_json_urllib(url, key, payload, timeout)
+    if transport == "curl":
+        try:
+            return request_json_curl(url, key, payload, timeout, body_path=body_path)
+        except RuntimeError:
+            return request_json_urllib(url, key, payload, timeout)
+    if transport == "auto":
+        if shutil.which("curl"):
+            return request_json_curl(url, key, payload, timeout, body_path=body_path)
+        return request_json_urllib(url, key, payload, timeout)
+    raise SystemExit("--transport must be curl, urllib, or auto")
+
+
 def download_url(url: str, timeout: int) -> tuple[bytes, str]:
     with urllib.request.urlopen(url, timeout=timeout) as resp:
         content_type = resp.headers.get_content_type()
@@ -144,6 +237,12 @@ def main() -> int:
     parser.add_argument("--output-dir", type=Path)
     parser.add_argument("--prefix", default="codex_image")
     parser.add_argument("--timeout", type=int, default=180)
+    parser.add_argument(
+        "--transport",
+        choices=["curl", "urllib", "auto"],
+        default="curl",
+        help="HTTP transport for generation requests. curl avoids some gateway/WAF blocks seen with urllib.",
+    )
     parser.add_argument("--extra-json", help="JSON object merged into the request payload")
     parser.add_argument("--print-response-summary", action="store_true")
     parser.add_argument("--dry-run", action="store_true", help="Print endpoint and payload without calling the API")
@@ -178,7 +277,7 @@ def main() -> int:
         return 0
 
     api_key = load_api_key(home)
-    status, parsed, elapsed = request_json(endpoint, api_key, payload, args.timeout)
+    status, parsed, elapsed = request_json(endpoint, api_key, payload, args.timeout, transport=args.transport)
     if status >= 400 or parsed.get("error"):
         print(f"http_status={status}")
         print(json.dumps({"error": parsed.get("error", parsed)}, ensure_ascii=False, indent=2))

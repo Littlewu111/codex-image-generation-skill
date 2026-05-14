@@ -36,6 +36,8 @@ python3 "${CODEX_HOME:-$HOME/.codex}/skills/codex-image-generation/scripts/gener
 
 The script prints `saved=...` and `markdown=...`. Put the printed Markdown image line in the final answer to show the image in Codex.
 
+The bundled script defaults to curl for the HTTP transport because some gateways/WAFs reject Python `urllib` image requests with HTTP 403 while accepting the same payload from curl. Use `--transport urllib` only when explicitly testing the fallback path.
+
 ## Manual Curl Pattern
 
 Use this only when the script is not suitable. Keep the key in a shell variable and avoid command traces that reveal secrets.
@@ -132,6 +134,7 @@ Success criteria:
 ## Troubleshooting
 
 - Codex normally stores the OpenAI-compatible API key in `${CODEX_HOME:-$HOME/.codex}/auth.json`.
+- If the script gets HTTP 403, first retry with the default curl transport or confirm it was not forced to `--transport urllib`.
 - If the response is `url` but a client expects base64, retry with `--response-format b64_json` if the user permits another real request.
 - If `output_format=jpeg` is used, expect a `.jpg`/JPEG file even when the response field is still named `b64_json`.
 - If a field is accepted but seems ignored, the gateway may forward it while the upstream model ignores it.
