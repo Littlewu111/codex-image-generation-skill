@@ -4,6 +4,8 @@
 from __future__ import annotations
 
 import importlib.util
+import subprocess
+import sys
 from pathlib import Path
 import tempfile
 import unittest
@@ -45,6 +47,42 @@ class RequestJsonTests(unittest.TestCase):
         self.assertIn("--config", args)
         self.assertNotIn("secret-token", args)
         self.assertNotIn("secret-token", completed.stdout)
+
+    def test_cli_rejects_non_gpt_image_2_models_before_request(self) -> None:
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(SCRIPT),
+                "--prompt",
+                "test",
+                "--model",
+                "dall-e-3",
+                "--dry-run",
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("Only gpt-image-2 is supported", result.stderr)
+
+    def test_cli_default_timeout_is_five_minutes(self) -> None:
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(SCRIPT),
+                "--prompt",
+                "test",
+                "--dry-run",
+            ],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+
+        self.assertIn('"model": "gpt-image-2"', result.stdout)
+        self.assertIn("timeout=300", result.stdout)
 
 
 if __name__ == "__main__":

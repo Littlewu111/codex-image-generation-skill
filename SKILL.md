@@ -14,6 +14,8 @@ Use the user's existing Codex API configuration instead of asking for a key.
 - Read the API key from environment `OPENAI_API_KEY` first, then `${CODEX_HOME:-$HOME/.codex}/auth.json` field `OPENAI_API_KEY`.
 - Never print or echo the API key.
 - Save generated images under `${CODEX_HOME:-$HOME/.codex}/generated_images` unless the user asks for another location.
+- Use `gpt-image-2` only. Do not retry with `gpt-image-1`, `dall-e-3`, `dall-e-2`, Gemini image models, or other image model names.
+- The bundled script defaults to a 300 second request timeout to allow slow image generations to finish.
 - In the Codex desktop client, display local images with an absolute-path Markdown image:
 
 ```markdown
@@ -37,6 +39,7 @@ python3 "${CODEX_HOME:-$HOME/.codex}/skills/codex-image-generation/scripts/gener
 The script prints `saved=...` and `markdown=...`. Put the printed Markdown image line in the final answer to show the image in Codex.
 
 The bundled script defaults to curl for the HTTP transport because some gateways/WAFs reject Python `urllib` image requests with HTTP 403 while accepting the same payload from curl. Use `--transport urllib` only when explicitly testing the fallback path.
+The script also rejects non-`gpt-image-2` model names locally before making a real API request.
 
 ## Manual Curl Pattern
 
@@ -81,7 +84,7 @@ On Linux, use `base64 -d` instead of macOS `base64 -D`.
 
 These are the common OpenAI-compatible image-generation parameters.
 
-- `model`: Required. Use the model routed by the configured gateway, for example `gpt-image-2`.
+- `model`: Required. This skill only supports `gpt-image-2`; other model names are rejected locally.
 - `prompt`: Required. Describe what to generate. Put "no text, no watermark, no clutter" in the prompt when negative constraints are needed.
 - `n`: Number of images. Use `1` for smoke tests and cost control.
 - `size`: Resolution or aspect setting. Common values: `1024x1024`, `1536x1024`, `1024x1536`, or `auto` when supported.
@@ -121,7 +124,8 @@ python3 "${CODEX_HOME:-$HOME/.codex}/skills/codex-image-generation/scripts/gener
   --output-compression 82 \
   --background opaque \
   --moderation auto \
-  --user codex-param-smoke-test
+  --user codex-param-smoke-test \
+  --timeout 300
 ```
 
 Success criteria:
@@ -135,6 +139,8 @@ Success criteria:
 
 - Codex normally stores the OpenAI-compatible API key in `${CODEX_HOME:-$HOME/.codex}/auth.json`.
 - If the script gets HTTP 403, first retry with the default curl transport or confirm it was not forced to `--transport urllib`.
+- If a different model returns `model_not_found`, do not keep trying fallback model names; this skill intentionally uses only `gpt-image-2`.
+- If `gpt-image-2` returns HTTP 524, the request reached the gateway but timed out upstream. The script default is already 300 seconds; simplify the prompt, keep `quality low`, or use a gateway path without a shorter Cloudflare/proxy timeout.
 - If the response is `url` but a client expects base64, retry with `--response-format b64_json` if the user permits another real request.
 - If `output_format=jpeg` is used, expect a `.jpg`/JPEG file even when the response field is still named `b64_json`.
 - If a field is accepted but seems ignored, the gateway may forward it while the upstream model ignores it.

@@ -12,6 +12,7 @@ from pathlib import Path
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
 import time
 import urllib.error
@@ -21,6 +22,10 @@ try:
     import tomllib
 except ModuleNotFoundError:
     tomllib = None
+
+
+SUPPORTED_MODEL = "gpt-image-2"
+DEFAULT_TIMEOUT_SECONDS = 300
 
 
 def codex_home() -> Path:
@@ -223,7 +228,7 @@ def download_url(url: str, timeout: int) -> tuple[bytes, str]:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--prompt", required=True)
-    parser.add_argument("--model", default="gpt-image-2")
+    parser.add_argument("--model", default=SUPPORTED_MODEL)
     parser.add_argument("--size")
     parser.add_argument("--quality")
     parser.add_argument("--n", type=int, default=1)
@@ -236,7 +241,7 @@ def main() -> int:
     parser.add_argument("--base-url", help="Override Codex config base_url")
     parser.add_argument("--output-dir", type=Path)
     parser.add_argument("--prefix", default="codex_image")
-    parser.add_argument("--timeout", type=int, default=180)
+    parser.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT_SECONDS)
     parser.add_argument(
         "--transport",
         choices=["curl", "urllib", "auto"],
@@ -247,6 +252,14 @@ def main() -> int:
     parser.add_argument("--print-response-summary", action="store_true")
     parser.add_argument("--dry-run", action="store_true", help="Print endpoint and payload without calling the API")
     args = parser.parse_args()
+
+    if args.model != SUPPORTED_MODEL:
+        print(
+            f"Only {SUPPORTED_MODEL} is supported by this skill. "
+            "Do not retry with gpt-image-1, dall-e-3, dall-e-2, or gemini image models.",
+            file=sys.stderr,
+        )
+        return 1
 
     home = codex_home()
     base_url = load_base_url(home, args.base_url)
@@ -273,6 +286,8 @@ def main() -> int:
     endpoint = f"{base_url}/images/generations"
     if args.dry_run:
         print(f"endpoint={endpoint}")
+        print(f"timeout={args.timeout}")
+        print(f"transport={args.transport}")
         print(json.dumps(payload, ensure_ascii=False, indent=2))
         return 0
 
